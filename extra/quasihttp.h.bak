@@ -1,0 +1,40 @@
+# include<sys/socket.h>
+# include<stdio.h>
+# include<sys/types.h>
+# include<malloc.h>
+# include<arpa/inet.h>
+# include<string.h>
+# include<dirent.h>
+# include<stdlib.h>
+# include<time.h>
+# include<pwd.h>
+# include<pthread.h>
+# include<errno.h>
+# include<sys/stat.h>
+# include<sys/time.h>
+
+struct headerfield
+{
+	char *key;
+	char *value;
+	struct headerfield *next;
+};
+
+struct cInfo
+{
+	int connFD;
+	int len;
+	struct sockaddr_in *remoteAddr;
+};
+
+
+char* getNextparameter(char *buffer);
+void service(char *buffer, struct cInfo *clientsocket);
+void senddata(char *url,int clientsocket,int redirect);
+int parseurl(char *url,char **modifiedurl);
+int isdir(char *);
+char* finduser(char*);
+char* findextention(char *);
+void getcontent(char *,char *);
+void sendheader(int Errcode,char **url,int clientsocket, char* buffer);
+struct headerfield * getHeader(char *);

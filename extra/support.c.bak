@@ -1,0 +1,152 @@
+#include"quasihttp.h"
+
+char* 
+findextention(char *url)
+{
+	int i,j;
+	char *ext;
+	for(i=strlen(url)-1;url[i] != '.';i--);
+	ext = malloc(strlen(url)-i);
+	i++;
+	for(j=0;url[i]!='\0';i++,j++)
+		ext[j] = url[i];
+	ext[j] = '\0';
+	printf("%s\n",ext);
+	return ext;
+}
+		
+
+
+char* 
+getNextparameter(char *buffer)
+{
+	int i;
+	char *ptr;
+	ptr = buffer;
+	for(i=0 ; i<1024 && buffer[i] != 32 ; i++)
+	{
+		ptr++;
+		if(buffer[i] == '\0')
+			return NULL;
+	}
+	*ptr='\0';
+	ptr++; 
+	return ptr;
+}
+
+
+void
+Pthread_detach(pthread_t tid)
+{
+	int		n;
+
+	if ( (n = pthread_detach(tid)) == 0)
+		return;
+	errno = n;
+	perror("pthread_detach error");
+}
+
+int 
+Socket( int family, int type, int protocol )
+{
+	int des;
+	des = socket( family,type,protocol);
+	if(des < 0)
+	{
+		perror("Error defining socket");
+		exit(1);
+	}
+	return des;
+}
+
+int Bind( int socket_fd, const struct sockaddr *myaddress, socklen_t address_length)
+{
+	int temp;
+	temp =  bind(socket_fd,myaddress,address_length);
+	if(temp < 0)
+	{
+		perror("Error Binding");
+		exit(1);
+	}
+}
+
+int Listen( int des, int backlog)
+{	
+	int temp;
+	temp = listen(des,backlog);
+	if(temp < 0)
+	{
+		perror("Error listening");
+		exit(1);
+	}
+	return temp;
+}
+
+int
+Accept(int fd, struct sockaddr *sa, socklen_t *salenptr)
+{
+	int		n;
+
+again:
+	if ( (n = accept(fd, sa, salenptr)) < 0) {
+#ifdef	EPROTO
+		if (errno == EPROTO || errno == ECONNABORTED)
+#else
+		if (errno == ECONNABORTED)
+#endif
+			goto again;
+		else
+		{
+			perror("accept error");
+			_exit(1);
+		}
+	}
+	return(n);
+}
+
+struct headerfield * getHeader(char * buffer)
+{
+	struct headerfield *head, *tail, *temp;
+	char *ptr,*ptr1;
+	int i;
+	head = NULL;
+	tail = NULL;
+	ptr1 = buffer;
+	while(1)
+	{
+		for(ptr = ptr1 ; *ptr != '\n' ; ptr++)
+		{
+			if(*ptr=='\0')
+			{
+				printf("Going to return\n");
+				return head;
+			}
+		}
+		*ptr='\0';
+		ptr++;
+		ptr1 = ptr;
+		for(ptr1 = ptr ; *ptr1 != 32 ; ptr1++)
+		{
+			if(*ptr1=='\0')
+				return head;
+		}
+		*ptr1='\0';
+		ptr1++;
+		temp = (struct headerfield *)malloc(sizeof(struct headerfield));
+		temp->key = ptr;
+		temp->value = ptr1;
+		temp->next = NULL;
+		if(head==NULL)
+		{
+			head = temp;
+			tail = temp;
+			temp = NULL;
+		}
+		else
+		{
+			tail->next = temp;
+			tail = temp;
+			temp = NULL;
+		}
+	}
+}

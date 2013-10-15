@@ -1,0 +1,493 @@
+/*
+*
+*       quasi HTTP web server "AsUWish/1.0"
+*       
+*       Ripul
+*       Abhijit
+*
+*       Jan 2001
+*
+*
+*
+*************************************************************/
+
+#include"quasihttp.h"
+
+#define _MULTI_THREADED
+
+static void *childThread(void*);
+
+char documentroot[] = "/home/httpd/html/";
+char defaultpage[] = "index.html";
+char userroot[] = "public_html/";
+char error301[] = "error301.html";
+char error403[] = "error403.html";
+char error400[] = "error400.html";
+char hostname[] = "yugandhar:1600";
+
+
+int
+main(int argc, char **argv)
+{
+	int listenFD;
+	socklen_t addrlen, len;
+	struct sockaddr_in  myaddress, *clientAdd;
+	pthread_t hThread;
+	struct cInfo *clientinfo;
+
+	listenFD = Socket(AF_INET,SOCK_STREAM,0);
+	
+	myaddress.sin_family = AF_INET;
+	myaddress.sin_port = htons(1600);
+	myaddress.sin_addr.s_addr = htonl(INADDR_ANY);
+	
+    len = sizeof(clientAdd);
+
+	bzero(&(myaddress.sin_zero),8);
+	
+	Bind(listenFD,(struct sockaddr *) &myaddress,sizeof(struct sockaddr));
+	Listen(listenFD,5);
+
+	clientinfo = (struct cInfo*)malloc(sizeof(struct cInfo));
+	clientAdd = (struct sockaddr_in*)malloc(sizeof(struct sockaddr_in));
+
+	for(;;)
+	{
+		len = addrlen;
+		printf("\nWaiting for connections\n");
+		clientinfo->connFD = accept(listenFD,clientAdd,(socklen_t *)&addrlen);
+		clientinfo->len = addrlen;
+		printf("Accepted : %d\n",clientinfo->connFD);
+		clientinfo->remoteAddr = clientAdd;
+		pthread_create(&hThread,NULL, &childThread, (void *) clientinfo);
+		printf("\nThread created\n");
+	}
+
+}
+
+
+static void * 
+childThread(void *temp)
+{
+	char buffer[1024];
+	int i,datalen,retval;
+	fd_set rfds;
+	struct timeval tv;
+	struct cInfo *clientinfo;
+
+	pthread_detach(pthread_self());
+
+	
+	clientinfo = temp;
+
+	while(1)
+	{
+		bzero(buffer,1024);
+		FD_ZERO(&rfds);
+		FD_SET((int)clientinfo->connFD,&rfds);
+		tv.tv_sec = 10;
+		tv.tv_usec = 0;
+		retval = select((int)(clientinfo->connFD + 1),&rfds,NULL,NULL,&tv);
+		if (retval)
+		{
+			datalen = recv((int)clientinfo->connFD,buffer,1024,0);
+			if(datalen == 0)
+			{
+				printf("Exiting.............");
+				break;
+			}
+			if(datalen < 0)
+			{
+				printf("Error receiving data......");
+				pthread_exit((int*)1);
+			}
+			else
+			{
+				for(i=0;buffer[i] != 0;i++)
+				{
+					printf("%c",buffer[i]);
+				}
+				if(buffer[datalen-4] == 13 && buffer[datalen-3] == 10 && buffer[datalen-2] == 13 && buffer[datalen-1] == 10)
+				{
+					service(buffer,clientinfo);
+					close((int) clientinfo->connFD);
+					break;
+				}	
+			}
+		}
+		else
+		{
+			close((int)clientinfo->connFD);
+			pthread_exit((int*)1);
+		}
+		bzero(buffer,1024);
+	}
+	pthread_exit((int*)1);
+}
+
+
+/* enters here when it recieves a request*/
+void 
+service(char *buffer, struct cInfo * clientsocket)
+{
+	FILE *fp;
+	char *url, *protocol, *parsedurl,rhost[24];
+	int errNo,i;
+	struct headerfield *head;
+
+	url=getNextparameter(buffer);
+	protocol=getNextparameter(url);
+	
+	head = getHeader(protocol);
+
+	if(strcmp(protocol,"HTTP/1.1")>0)
+		senddata(url,clientsocket->connFD,400);
+
+	if( (strcmp(buffer,"GET")!=0) && (strcmp(buffer,"POST")!=0) && (strcmp(buffer,"HEAD")!=0))
+		senddata(url,clientsocket->connFD,501);
+	
+	errNo = parseurl(url,&parsedurl);
+	printf("\nURL:%s\n",parsedurl);
+	if(errNo)
+		senddata(url,clientsocket->connFD,errNo);
+	else
+		senddata(parsedurl,clientsocket->connFD,errNo);
+}
+
+
+int 
+parseurl(char *url,char **modifiedurl)
+{
+	int i,length;
+	char *user, *home;
+	struct passwd *pass;
+	if(strlen(url)==1)
+	{
+		*modifiedurl = malloc(strlen(documentroot) + strlen(defaultpage)+1);
+		strcpy(*modifiedurl,documentroot);
+		strcat(*modifiedurl,defaultpage);
+		return 0;
+	}
+	if(url[1] == '~')
+	{
+		user = finduser(url);
+		pass = getpwnam(user);
+		length = strlen(pass->pw_dir);
+		length += strlen(userroot);
+		length += strlen(url);
+	}
+	else
+	{
+		length = strlen(documentroot);
+		length += strlen(url);
+	}
+	if(isdir(url) && url[strlen(url)-1]!='/')
+	{
+		length += strlen(defaultpage)+1;
+		return 301;
+	}
+	else if(isdir(url) && url[strlen(url)-1]=='/')
+		length += strlen(defaultpage);
+	
+	*modifiedurl = malloc(length +1);
+	if(url[1] == '~')
+	{
+		strcpy(*modifiedurl,pass->pw_dir);
+		strcat(*modifiedurl,"/");
+		strcat(*modifiedurl,userroot);
+		i = strlen(user) + 3;
+		length = strlen(*modifiedurl) ;
+		printf("I am in is ~\n");
+		if(url[i] != '\0')
+		{
+			for(;url[i] != '\0'; i++,length++)
+			{
+		
+				(*modifiedurl)[length] = url[i];
+			}
+			(*modifiedurl)[length] = '\0';
+		}
+	}
+	else
+	{
+		strcpy(*modifiedurl,documentroot);
+		(*modifiedurl)[strlen(*modifiedurl)-1] = '\0';
+		strcat(*modifiedurl,url);
+	}
+	if(isdir(url))
+	{
+		strcat(*modifiedurl,defaultpage);
+	}
+	return 0;
+}	
+
+char* 
+finduser(char *url)
+{
+	int i;
+	char *user;
+	for(i=2;url[i] != '/'&&url[i] != '\0';i++);
+	user = malloc(i-1);
+	for(i=2;url[i] != '/'&&url[i] != '\0';user[i-2]=url[i],i++);
+	user[i-2] = '\0';
+	return user;
+}
+	
+		
+int 
+isdir(char *url)
+{
+	int i;
+	for(i = strlen(url) - 1;url[i] != '.' && url[i] != '/'; i--);
+	if(url[i] == '.')
+		return 0;
+	else
+		return 1;
+}
+			
+
+void 
+senddata(char *url,int clientsocket,int errNo)
+{
+	int i,count=0;
+	char c;
+	FILE *fp, *fp1;
+	time_t tim;
+	struct stat size;
+	char buffer[1024];	
+	bzero(buffer,1024);
+	fp1 = fopen("logs","wb");
+	printf("I am send Data \n");
+
+	if(errNo == 301)
+	{
+		sendheader(301,&url,clientsocket,buffer);
+		fp = fopen(url,"rb");
+	}
+	else if(errNo == 400)
+	{
+		sendheader(400,&url,clientsocket,buffer);
+		fp = fopen(url,"rb");
+	}
+	else if(errNo == 501)
+	{
+		sendheader(501,&url,clientsocket,buffer);
+		fp = fopen(url,"rb");
+	}
+	else
+	{
+		fp = fopen(url,"rb");
+		printf("\nfile %s\n",url);
+		if(fp == NULL)
+		{
+			if(errno == 13)
+			{
+				sendheader(403,&url,clientsocket,buffer);
+				printf("Not autharised\n");
+				fp = fopen(url,"rb");
+			}
+			else if(errno == 2)
+			{
+				sendheader(404,&url,clientsocket,buffer);
+				perror("fopen");
+				fp = fopen(url,"rb");
+			}
+		}
+		else
+			sendheader(200,&url,clientsocket,buffer);
+	}
+
+	
+	write(clientsocket,buffer,strlen(buffer));
+
+	printf("\nfile %s\n",url);
+	stat(url,&size);
+	printf("%d\n",size.st_size);
+	while(count < size.st_size)
+	{
+		bzero(buffer,1024);
+		for(i = 0; i< 1024 && count < size.st_size; i++,count++)
+			buffer[i] = fgetc(fp);
+
+		write(clientsocket,buffer,i);
+	}
+	fclose(fp);
+	fclose(fp1);
+	printf("End\n");
+	
+}
+
+
+void 
+sendheader(int Errcode,char **url,int clientsocket, char* buffer)
+{
+	time_t tim;
+	int i,datalen;
+	struct stat size;
+	char *ext, charsize[20];
+
+	bzero(buffer,1024);
+
+	ext = findextention(*url);
+
+	if(Errcode == 200)
+	{
+		strcpy(buffer,"HTTP/1.1 200 OK\nDate: ");
+		tim = time(&tim);
+		strcat(buffer,ctime(&tim));
+		strcat(buffer,"Server :AsUWish/1.0 (Unix)\n");
+		strcat(buffer,"Connection: close\n");
+		if(strcmp(ext,"cgi")!=0)
+		{
+			strcat(buffer,"Content-Type: ");
+			getcontent(buffer,ext);
+		}
+		strcat(buffer,"\nAccept-Ranges: bytes\n");
+		strcat(buffer,"Content-Length: ");
+		stat(*url,&size);
+		sprintf(charsize,"%d\n\n",size.st_size);
+		strcat(buffer,charsize);
+	}
+	else if(Errcode == 301)
+	{
+		strcpy(buffer,"HTTP/1.1 301 Moved Permanently\n");
+		tim = time(&tim);
+		strcat(buffer,ctime(&tim));
+		strcat(buffer,"Server :AsUWish/1.0 (Unix)\n");
+		strcat(buffer,"Location: http://");
+		strcat(buffer,hostname);
+		strcat(buffer,*url);
+		strcat(buffer,"/\n");
+		strcat(buffer,"Connection: close\n");
+		strcat(buffer,"Content-Type: text/html\n");
+		strcat(buffer,"Accept-Ranges: bytes\n");
+		strcat(buffer,"Content-Length: ");
+		stat(error301,&size);
+		sprintf(charsize,"%d\n\n",size.st_size);
+		strcat(buffer,charsize);
+		*url = error301; 
+	}
+	else if(Errcode == 403)
+	{
+		strcpy(buffer,"HTTP/1.1 403 Forbidden\n");
+		tim = time(&tim);
+		strcat(buffer,ctime(&tim));
+		strcat(buffer,"Server :AsUWish/1.0 (Unix)\n");
+		strcat(buffer,"Connection: close\n");
+		strcat(buffer,"Content-Type: text/html\n");
+		strcat(buffer,"Accept-Ranges: bytes\n");
+		strcat(buffer,"Content-Length: ");
+		stat(error403,&size);
+		sprintf(charsize,"%d\n\n",size.st_size);
+		strcat(buffer,charsize);
+		*url = error403;
+	}
+	else if(Errcode == 400)
+	{
+		strcpy(buffer,"HTTP/1.1 400 Bad Request\n");
+		tim = time(&tim);
+		strcat(buffer,ctime(&tim));
+		strcat(buffer,"Server :AsUWish/1.0 (Unix)\n");
+		strcat(buffer,"Connection: close\n");
+		strcat(buffer,"Content-Type: text/html\n");
+		strcat(buffer,"Accept-Ranges: bytes\n");
+		strcat(buffer,"Content-Length: ");
+		stat(error403,&size);
+		sprintf(charsize,"%d\n\n",size.st_size);
+		strcat(buffer,charsize);
+		*url = error400;
+	}
+	else if(Errcode == 404)
+	{
+		strcpy(buffer,"HTTP/1.1 404 Not Found\n");
+		tim = time(&tim);
+		strcat(buffer,ctime(&tim));
+		strcat(buffer,"Server :AsUWish/1.0 (Unix)\n");
+		strcat(buffer,"Connection: close\n");
+		strcat(buffer,"Content-Type: text/html\n");
+		strcat(buffer,"Accept-Ranges: bytes\n");
+		strcat(buffer,"Content-Length: ");
+		stat(error403,&size);
+		sprintf(charsize,"%d\n\n",size.st_size);
+		strcat(buffer,charsize);
+		*url = error400;
+	}
+	else if(Errcode == 501)
+	{
+		strcpy(buffer,"HTTP/1.1 501 Method Not Implemented\n");
+		tim = time(&tim);
+		strcat(buffer,ctime(&tim));
+		strcat(buffer,"Server :AsUWish/1.0 (Unix)\n");
+		if(strcmp(ext,"cgi"))
+			strcat(buffer,"Allow: GET, HEAD, POST\n");
+		else
+			strcat(buffer,"Allow: GET, HEAD\n");
+		strcat(buffer,"Connection: close\n");
+		strcat(buffer,"Content-Type: text/html\n");
+		strcat(buffer,"Accept-Ranges: bytes\n");
+		strcat(buffer,"Content-Length: ");
+		stat(error403,&size);
+		sprintf(charsize,"%d\n\n",size.st_size);
+		strcat(buffer,charsize);
+		*url = error400;
+	}
+
+	puts(buffer);
+	printf(">>>> Length of header : %d\n",strlen(buffer));
+}
+
+
+void 
+getcontent(char *buffer,char *ext)
+{
+	char c=0,readbuf[200];
+	FILE *fp;
+	int i,j,flag,same;
+	fp = fopen("/etc/mime.types","r");
+	if(fp ==NULL)
+	{
+		printf("Unable to open file\n");
+		exit(1);
+	}
+	while(c != EOF)
+	{
+		for(i=0;i<200&&c!='\n'&&c!=EOF;i++)
+		{
+			c = fgetc(fp);
+			readbuf[i] = c;
+		}
+		readbuf[i] = '\n';
+		flag=0;
+		for(i=0;readbuf[i]!='\n'&&i<200;i++)
+		{
+			if(readbuf[i] == '\t' || readbuf[i] == ' ')
+			{
+				flag++;
+				j=0;
+				same = 1;
+				continue;
+			}
+			if(flag>0)
+			{
+				if(ext[j] != readbuf[i])
+				{
+					same = 0;
+					flag = 0;
+				}
+				else
+				{
+					j++;
+				}
+				if(j == strlen(ext))
+				{
+					for(i=0;readbuf[i]!='\t';i++);
+					readbuf[i] = '\0';
+					strcat(buffer,readbuf);
+					break;
+				}
+			}
+		}
+		if(c=='\n')	c=0;	
+	}
+	close((int)fp);				
+}
